@@ -1,0 +1,4 @@
+roboscape-main:
+  image: gstein17/roboscape-main
+  ports:
+    - 5000:5000
