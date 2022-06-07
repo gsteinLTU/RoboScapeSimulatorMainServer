@@ -55,6 +55,22 @@ routes:
   post "/rooms/create":
     # Request to create a room
     resp %*{"roomID": "", "server": ""}
-  post "/server/report":
+  post "/server/announce":
     # Incoming report from other server
+    echo request.params
+    echo request.formData
+    echo request.body
+
+    resp ""
+  post "/server/rooms":
+    # Incoming report from other server
+    echo request.params
+    echo request.formData
+    echo request.body
+    resp ""
+  post "/server/environments":
+    # Incoming report from other server
+    echo request.params
+    echo request.formData
+    echo request.body
     resp ""
