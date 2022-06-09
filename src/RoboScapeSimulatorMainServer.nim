@@ -2,6 +2,8 @@ import jester, json, posix
 import std/sequtils
 import std/sugar
 import std/strutils
+import std/options
+import std/tables
 
 onSignal(SIGINT, SIGTERM):
   quit(QuitSuccess)
@@ -14,21 +16,19 @@ type
     users: seq[string]
     hibernating: bool
 
-type
   Server = object
     address: string
     maxRooms: uint16
     environments: seq[string]
 
-type
   Environment = object
-    id: string
-    name: string
-    description: string
+    ID: string
+    Name: string
+    Description: Option[string]
 
 var rooms = newSeq[Room]()
 var servers = newTable[string, Server]()
-var environments = newSeq[Environment]()
+var environments = newTable[string, Environment]()
 
 routes:
   get "/server/status":
@@ -40,7 +40,7 @@ routes:
             "maxRooms": maxRoomsSum}
   get "/environments/list":
     # List all environments
-    resp %*environments
+    resp %*toSeq(environments.values)
   get "/rooms/list":
     # List rooms
     var respRooms = rooms
@@ -58,25 +58,30 @@ routes:
     resp %*{"roomID": "", "server": ""}
   post "/server/announce":
     # Incoming report from other server
-    echo request.params
-    echo request.formData
-    echo request.body
-    echo request.ip
-
     if not (request.ip in servers):
-      servers[request.ip] = Server(address: request.ip,
-          maxRooms: uint16(parseInt(request.params["maxRooms"])))
+      if request.params.hasKey("maxRooms"):
+        servers[request.ip] = Server(address: request.ip,
+            maxRooms: uint16(parseInt(request.params["maxRooms"])))
 
     resp ""
   post "/server/rooms":
     # Incoming report from other server
-    echo request.params
-    echo request.formData
-    echo request.body
+    if request.ip in servers:
+      if request.params.hasKey("rooms"):
+        echo request.params["rooms"]
     resp ""
   post "/server/environments":
     # Incoming report from other server
-    echo request.params
-    echo request.formData
-    echo request.body
+
+    if request.ip in servers:
+      if request.params.hasKey("environments"):
+        try:
+          let inData = parseJson(request.params["environments"])
+          let inSeq = to(inData, seq[Environment])
+
+          for inEnv in inSeq:
+            if not (inEnv.ID in environments):
+              environments[inEnv.ID] = inEnv
+        except:
+          echo "Error parsing environments"
     resp ""
