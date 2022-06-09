@@ -78,18 +78,29 @@ routes:
     # Incoming report from other server
     if request.ip in servers:
       if request.params.hasKey("rooms"):
-        # Remove existing entries
-        rooms = rooms.filter(room => room.server.get() != request.ip)
+        try:
+          var parsedRooms = to(parseJson(request.params["rooms"]), seq[Room])
+          # Remove existing entries
+          rooms = rooms.filter(room => room.server.get() != request.ip)
 
-        # Add new entries
-        #for room in
-        echo request.params["rooms"]
+          # Add new entries
+          for room in parsedRooms:
+            var tempRoom = room
+            tempRoom.server = some(request.ip)
+            rooms.add(tempRoom)
+
+        except:
+          echo "Error reading rooms"
     resp ""
   delete "/server/rooms":
     # Incoming report from other server
     if request.ip in servers:
       if request.params.hasKey("rooms"):
-        echo request.params["rooms"]
+        try:
+          var parsedRooms = to(parseJson(request.params["rooms"]), seq[Room])
+          rooms = rooms.filter(room => not(room.name in parsedRooms.map(room => room.name)))
+        except:
+          echo "Error reading rooms"
 
     resp ""
   patch "/server/rooms":
