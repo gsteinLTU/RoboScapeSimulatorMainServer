@@ -33,6 +33,12 @@ var rooms = newSeq[Room]()
 var servers = newTable[string, Server]()
 var environments = newOrderedTable[string, Environment]()
 
+proc numRooms(server: Server): uint =
+  return uint(len(rooms.filter(room => room.server.get() == server.address)))
+
+proc isFull(server: Server): bool =
+  return server.numRooms >= server.maxRooms
+
 routes:
   get "/server/status":
     # Server statistics
