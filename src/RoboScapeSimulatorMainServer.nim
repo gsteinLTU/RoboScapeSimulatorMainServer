@@ -120,7 +120,8 @@ routes:
     withLock serversLock:
       # Request to create a room
       var environment = "default"
-      if request.params.hasKey("environment"):
+      if request.params.hasKey("environment") and
+        len(request.params["environment"]) > 0:
         environment = request.params["environment"]
 
       # Determine if valid server exists
@@ -129,6 +130,7 @@ routes:
             not server.isFull())) == 0:
         echo "No servers available"
         resp Http500, "No servers available"
+        return
 
       # Determine which server is best to use
       let sortedServers = sorted(servers.values.toSeq(),
