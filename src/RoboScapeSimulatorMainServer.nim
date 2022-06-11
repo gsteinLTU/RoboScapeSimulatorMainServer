@@ -68,6 +68,18 @@ routes:
             "id": room.name, "server": room.server.get(),
             "environment": room.environment}.toTable)))
 
+  get "/rooms/info":
+
+    if request.params.hasKey("id"):
+      let matches = rooms.filter(room => room.name == request.params["id"])
+
+      if len(matches) > 0:
+        resp Http200, @[("Content-Type", "application/json"), (
+          "Access-Control-Allow-Origin", "*")], $(%*matches[0])
+        return
+
+    resp Http404, "Room not found"
+
   post "/rooms/create":
     # Request to create a room
     if len(servers) == 0:
@@ -117,8 +129,8 @@ routes:
 
           servers[request.ip].lastUpdate = now()
 
-        except:
-          echo "Error reading rooms"
+        except Exception as e:
+          echo "Error reading rooms: ", e.msg
     resp ""
   delete "/server/rooms":
     # Incoming report from other server
@@ -127,8 +139,8 @@ routes:
         try:
           var parsedRooms = to(parseJson(request.params["rooms"]), seq[Room])
           rooms = rooms.filter(room => not(room.name in parsedRooms.map(room => room.name)))
-        except:
-          echo "Error reading rooms"
+        except Exception as e:
+          echo "Error reading rooms: ", e.msg
 
         servers[request.ip].lastUpdate = now()
 
@@ -146,8 +158,8 @@ routes:
             tempRoom.server = some(request.ip)
             rooms.add(tempRoom)
 
-        except:
-          echo "Error reading rooms"
+        except Exception as e:
+          echo "Error reading rooms: ", e.msg
 
       servers[request.ip].lastUpdate = now()
 
@@ -164,8 +176,8 @@ routes:
           for inEnv in inSeq:
             if not (inEnv.ID in environments):
               environments[inEnv.ID] = inEnv
-        except:
-          echo "Error parsing environments"
+        except Exception as e:
+          echo "Error reading environments: ", e.msg
 
         servers[request.ip].lastUpdate = now()
 
