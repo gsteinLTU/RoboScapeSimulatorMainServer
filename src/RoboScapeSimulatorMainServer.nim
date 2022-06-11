@@ -55,12 +55,18 @@ when isMainModule:
       await sleepAsync(interval)
 
       withLock serversLock:
+        # Detect servers which have not updated recently
         let oldServers = servers.values().toSeq()
           .filter(server =>
             (now() - server.lastUpdate) > initDuration(seconds = 60 * 1))
+          .map(server => server.address)
 
         for server in oldServers:
-          servers.del(server.address)
+          servers.del(server)
+
+        # Remove rooms hosted on dead server
+        withLock roomsLock:
+          rooms = rooms.filter(room => not (room.server.get in oldServers))
 
   discard deadCheck(10000)
 
@@ -112,7 +118,14 @@ routes:
   post "/rooms/create":
     withLock serversLock:
       # Request to create a room
-      if len(servers.values().toSeq().filter(server => server.isFull())) == 0:
+      var environment = "default"
+      if request.params.hasKey("environment"):
+        environment = request.params["environment"]
+
+      # Determine if valid server exists
+      if len(servers.values().toSeq()
+        .filter(server => environment in server.environments and
+            not server.isFull())) == 0:
         echo "No servers available"
         resp Http500, "No servers available"
 
@@ -217,6 +230,8 @@ routes:
               for inEnv in inSeq:
                 if not (inEnv.ID in environments):
                   environments[inEnv.ID] = inEnv
+                if not (inEnv.ID in servers[request.ip].environments):
+                  servers[request.ip].environments.add(inEnv.ID)
             except Exception as e:
               echo "Error reading environments: ", e.msg
 
