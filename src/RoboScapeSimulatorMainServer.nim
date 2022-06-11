@@ -58,7 +58,7 @@ when isMainModule:
         # Detect servers which have not updated recently
         let oldServers = servers.values().toSeq()
           .filter(server =>
-            (now() - server.lastUpdate) > initDuration(seconds = 60 * 1))
+            (now() - server.lastUpdate) > initDuration(seconds = 60 * 15))
           .map(server => server.address)
 
         for server in oldServers:
@@ -68,7 +68,7 @@ when isMainModule:
         withLock roomsLock:
           rooms = rooms.filter(room => not (room.server.get in oldServers))
 
-  discard deadCheck(10000)
+  discard deadCheck(60 * 1000)
 
 routes:
   get "/server/status":
