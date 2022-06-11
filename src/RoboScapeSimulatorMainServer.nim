@@ -139,11 +139,12 @@ routes:
         let targetServer = sortedServers[0]
         let reqBody = request.params.pairs().toSeq()
           .map(pair => pair[0] & "=" & pair[1]).join("&")
-        let targetResponse = await client.postContent("http://" &
-            targetServer.address & ":8000/rooms/create", reqBody)
+        let targetResponse = parseJson(await client.postContent("http://" &
+            targetServer.address & ":8000/rooms/create", reqBody))
+        targetResponse.add("server", %*targetServer.address)
 
         resp Http200, @[("Content-Type", "application/json"), (
-            "Access-Control-Allow-Origin", "*")], targetResponse
+            "Access-Control-Allow-Origin", "*")], $targetResponse
       except:
         echo "Error requesting room from " & sortedServers[0].address
         resp Http500
