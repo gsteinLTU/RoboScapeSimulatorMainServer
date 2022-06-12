@@ -10,4 +10,4 @@ binDir        = "build"
 
 # Dependencies
 
-requires "nim >= 1.0.6", "jester#head"
+requires "nim >= 1.0.6", "httpbeast#head", "jester#head"
