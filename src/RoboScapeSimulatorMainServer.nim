@@ -47,28 +47,20 @@ proc numRooms(server: Server): uint =
 proc isFull(server: Server): bool =
   return server.numRooms >= server.maxRooms
 
+proc deadCheck() =
+  withLock serversLock:
+    # Detect servers which have not updated recently
+    let oldServers = servers.values().toSeq()
+      .filter(server =>
+        (now() - server.lastUpdate) > initDuration(seconds = 60 * 15))
+      .map(server => server.address)
 
-when isMainModule:
-  # Check for dead servers
-  proc deadCheck(interval: int) {.async.} =
-    while true:
-      await sleepAsync(interval)
+    for server in oldServers:
+      servers.del(server)
 
-      withLock serversLock:
-        # Detect servers which have not updated recently
-        let oldServers = servers.values().toSeq()
-          .filter(server =>
-            (now() - server.lastUpdate) > initDuration(seconds = 60 * 15))
-          .map(server => server.address)
-
-        for server in oldServers:
-          servers.del(server)
-
-        # Remove rooms hosted on dead server
-        withLock roomsLock:
-          rooms = rooms.filter(room => not (room.server.get in oldServers))
-
-  discard deadCheck(120 * 1000)
+    # Remove rooms hosted on dead server
+    withLock roomsLock:
+      rooms = rooms.filter(room => not (room.server.get in oldServers))
 
 routes:
   get "/server/status":
@@ -89,6 +81,8 @@ routes:
       resp Http200, @[("Content-Type", "application/json"), (
         "Access-Control-Allow-Origin", "*")], $(%*toSeq(environments.values))
   get "/rooms/list":
+    deadCheck()
+
     withLock roomsLock:
       # List rooms
       var respRooms = rooms
@@ -117,6 +111,8 @@ routes:
       resp Http404, "Room not found"
 
   post "/rooms/create":
+    deadCheck()
+
     withLock serversLock:
       # Request to create a room
       var environment = "default"
