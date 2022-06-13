@@ -48,9 +48,10 @@ proc isFull(server: Server): bool =
   return server.numRooms >= server.maxRooms
 
 proc deadCheck() =
+  var oldServers = newSeq[string]()
   withLock serversLock:
     # Detect servers which have not updated recently
-    let oldServers = servers.values().toSeq()
+    oldServers = servers.values().toSeq()
       .filter(server =>
         (now() - server.lastUpdate) > initDuration(seconds = 60 * 15))
       .map(server => server.address)
@@ -58,23 +59,24 @@ proc deadCheck() =
     for server in oldServers:
       servers.del(server)
 
-    # Remove rooms hosted on dead server
-    withLock roomsLock:
-      rooms = rooms.filter(room => not (room.server.get in oldServers))
+  # Remove rooms hosted on dead server
+  withLock roomsLock:
+    rooms = rooms.filter(room => not (room.server.get in oldServers))
 
 routes:
   get "/server/status":
+    var maxRoomsSum: uint16 = 0
     withLock serversLock:
       # Server statistics
-      let maxRoomsSum = if len(servers) > 0:
-          toSeq(servers.values()).map(server => server.maxRooms).foldl(a + b) else: 0
+      maxRoomsSum = if len(servers) > 0: toSeq(servers.values()).map(server =>
+          server.maxRooms).foldl(a + b) else: 0
 
-      withLock roomsLock:
-        resp Http200, @[("Content-Type", "application/json"), (
-          "Access-Control-Allow-Origin", "*")], $(%*{"activeRooms": len(
-              filter(rooms, r => not r.isHibernating)),
-          "hibernatingRooms": len(filter(rooms, r => r.isHibernating)),
-              "maxRooms": maxRoomsSum})
+    withLock roomsLock:
+      resp Http200, @[("Content-Type", "application/json"), (
+        "Access-Control-Allow-Origin", "*")], $(%*{"activeRooms": len(
+            filter(rooms, r => not r.isHibernating)),
+        "hibernatingRooms": len(filter(rooms, r => r.isHibernating)),
+            "maxRooms": maxRoomsSum})
   get "/environments/list":
     # List all environments
     withLock environmentsLock:
@@ -83,20 +85,22 @@ routes:
   get "/rooms/list":
     deadCheck()
 
+    var respRooms = newSeq[Room]()
+
     withLock roomsLock:
       # List rooms
-      var respRooms = rooms
+      respRooms = rooms
 
       # Filter to user's rooms
       if request.params.hasKey("user"):
         respRooms = rooms.filter(
           room => room.visitors.get().contains(request.params["user"]))
 
-      # Output only relevant fields
-      resp Http200, @[("Content-Type", "application/json"), (
-          "Access-Control-Allow-Origin", "*")], $(%*(respRooms.map(room => {
-              "id": room.name, "server": room.server.get(),
-              "environment": room.environment}.toTable)))
+    # Output only relevant fields
+    resp Http200, @[("Content-Type", "application/json"), (
+        "Access-Control-Allow-Origin", "*")], $(%*(respRooms.map(room => {
+            "id": room.name, "server": room.server.get(),
+            "environment": room.environment}.toTable)))
 
   get "/rooms/info":
     withLock roomsLock:
@@ -112,6 +116,8 @@ routes:
 
   post "/rooms/create":
     deadCheck()
+
+    var targetServer: Server
 
     withLock serversLock:
       # Request to create a room
@@ -132,20 +138,21 @@ routes:
       let sortedServers = sorted(servers.values.toSeq(),
         (a, b) => cmp(a.numRooms(), b.numRooms()))
 
-      # Request room from server
-      try:
-        let targetServer = sortedServers[0]
-        let reqBody = request.params.pairs().toSeq()
-          .map(pair => pair[0] & "=" & pair[1]).join("&")
-        let targetResponse = parseJson(await client.postContent("http://" &
-            targetServer.address & ":8000/rooms/create", reqBody))
-        targetResponse.add("server", %*targetServer.address)
+      targetServer = sortedServers[0]
 
-        resp Http200, @[("Content-Type", "application/json"), (
-            "Access-Control-Allow-Origin", "*")], $targetResponse
-      except:
-        echo "Error requesting room from " & sortedServers[0].address
-        resp Http500
+    # Request room from server
+    try:
+      let reqBody = request.params.pairs().toSeq()
+        .map(pair => pair[0] & "=" & pair[1]).join("&")
+      let targetResponse = parseJson(await client.postContent("http://" &
+          targetServer.address & ":8000/rooms/create", reqBody))
+      targetResponse.add("server", %*targetServer.address)
+
+      resp Http200, @[("Content-Type", "application/json"), (
+          "Access-Control-Allow-Origin", "*")], $targetResponse
+    except:
+      echo "Error requesting room from " & targetServer.address
+      resp Http500
 
   post "/server/announce":
     withLock serversLock:
@@ -157,86 +164,101 @@ routes:
 
     resp ""
   put "/server/rooms":
+    # Incoming report from other server
+    var validServer: bool = false
+
     withLock serversLock:
-      # Incoming report from other server
-      if request.ip in servers:
-        if request.params.hasKey("rooms"):
-          try:
-            withLock roomsLock:
-              var parsedRooms = to(parseJson(request.params["rooms"]), seq[Room])
-              # Remove existing entries
-              rooms = rooms.filter(room => room.server.get() != request.ip)
+      validServer = request.ip in servers
+      servers[request.ip].lastUpdate = now()
 
-              # Add new entries
-              for room in parsedRooms:
-                var tempRoom = room
-                tempRoom.server = some(request.ip)
-                rooms.add(tempRoom)
+    if validServer:
+      if request.params.hasKey("rooms"):
+        try:
+          var parsedRooms = to(parseJson(request.params["rooms"]), seq[Room])
 
-            servers[request.ip].lastUpdate = now()
+          # Remove existing entries
+          withLock roomsLock:
+            rooms = rooms.filter(room => room.server.get() != request.ip)
 
-          except Exception as e:
-            echo "Error reading rooms: ", e.msg
+            # Add new entries
+            for room in parsedRooms:
+              var tempRoom = room
+              tempRoom.server = some(request.ip)
+              rooms.add(tempRoom)
+
+        except Exception as e:
+          echo "Error reading rooms: ", e.msg
     resp ""
   delete "/server/rooms":
+    # Incoming report from other server
+    var validServer: bool = false
+
     withLock serversLock:
-      # Incoming report from other server
-      if request.ip in servers:
-        if request.params.hasKey("rooms"):
-          try:
-            var parsedRooms = to(parseJson(request.params["rooms"]), seq[Room])
+      validServer = request.ip in servers
+      servers[request.ip].lastUpdate = now()
 
-            withLock roomsLock:
-              rooms = rooms.filter(room => not(room.name in parsedRooms.map(
-                  room => room.name)))
-          except Exception as e:
-            echo "Error reading rooms: ", e.msg
+    if validServer:
+      if request.params.hasKey("rooms"):
+        try:
+          var parsedRooms = to(parseJson(request.params["rooms"]), seq[Room])
 
-          servers[request.ip].lastUpdate = now()
+          withLock roomsLock:
+            rooms = rooms.filter(room => not(room.name in parsedRooms.map(
+                room => room.name)))
+        except Exception as e:
+          echo "Error reading rooms: ", e.msg
 
     resp ""
   patch "/server/rooms":
+    # Incoming report from other server
+    var validServer: bool = false
+
     withLock serversLock:
-      # Incoming report from other server
-      if request.ip in servers:
-        if request.params.hasKey("rooms"):
-          try:
-            withLock roomsLock:
-              var parsedRooms = to(parseJson(request.params["rooms"]), seq[Room])
-              rooms = rooms.filter(room => not(room.name in parsedRooms.map(
-                  room => room.name)))
+      validServer = request.ip in servers
+      servers[request.ip].lastUpdate = now()
 
-              for room in parsedRooms:
-                var tempRoom = room
-                tempRoom.server = some(request.ip)
-                rooms.add(tempRoom)
+    if validServer:
+      if request.params.hasKey("rooms"):
+        try:
+          var parsedRooms = to(parseJson(request.params["rooms"]), seq[Room])
 
-          except Exception as e:
-            echo "Error reading rooms: ", e.msg
+          withLock roomsLock:
+            rooms = rooms.filter(room => not(room.name in parsedRooms.map(
+                room => room.name)))
 
-        servers[request.ip].lastUpdate = now()
+            for room in parsedRooms:
+              var tempRoom = room
+              tempRoom.server = some(request.ip)
+              rooms.add(tempRoom)
+
+        except Exception as e:
+          echo "Error reading rooms: ", e.msg
 
     resp ""
   post "/server/environments":
+    # Incoming report from other server
+    var validServer: bool = false
+
     withLock serversLock:
-      withLock environmentsLock:
-        # Incoming report from other server
+      validServer = request.ip in servers
+      servers[request.ip].lastUpdate = now()
 
-        if request.ip in servers:
-          if request.params.hasKey("environments"):
-            try:
-              let inData = parseJson(request.params["environments"])
-              let inSeq = to(inData, seq[Environment])
+    if validServer:
+      if request.params.hasKey("environments"):
+        try:
+          let inData = parseJson(request.params["environments"])
+          let inSeq = to(inData, seq[Environment])
+          withLock environmentsLock:
+            for inEnv in inSeq:
+              if not (inEnv.ID in environments):
+                environments[inEnv.ID] = inEnv
 
-              for inEnv in inSeq:
-                if not (inEnv.ID in environments):
-                  environments[inEnv.ID] = inEnv
-                if not (inEnv.ID in servers[request.ip].environments):
-                  servers[request.ip].environments.add(inEnv.ID)
-            except Exception as e:
-              echo "Error reading environments: ", e.msg
-
-            servers[request.ip].lastUpdate = now()
+          withLock serversLock:
+            for inEnv in inSeq:
+              if not (inEnv.ID in servers[request.ip].environments):
+                servers[request.ip].environments.add(inEnv.ID)
+        except Exception as e:
+          echo "Error reading environments: ", e.msg
 
     resp ""
 
