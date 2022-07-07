@@ -26,6 +26,7 @@ type
     ID: string
     Name: string
     Description: Option[string]
+    Category: Option[string]
 
 
 var roomsLock, serversLock, environmentsLock: Lock
